@@ -1,0 +1,7 @@
+[package]
+name = "bookmark-census"
+version = "0.1.0"
+edition = "2021"
+authors = ["james-w921"]
+license = "MIT"
+description = "Parse Netscape-format bookmark exports and report on structure, duplicates, and depth"
