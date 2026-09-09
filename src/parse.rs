@@ -204,3 +204,128 @@ fn decode_entities(s: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_a_flat_list_of_bookmarks() {
+        let doc = r#"
+            <DL><p>
+                <DT><A HREF="https://a.example/">A</A>
+                <DT><A HREF="https://b.example/">B</A>
+            </DL><p>
+        "#;
+        let root = parse(doc).unwrap();
+        assert_eq!(root.bookmarks.len(), 2);
+        assert_eq!(root.bookmarks[0].url, "https://a.example/");
+        assert_eq!(root.bookmarks[1].url, "https://b.example/");
+        assert!(root.folders.is_empty());
+    }
+
+    #[test]
+    fn parses_nested_folders_in_document_order() {
+        let doc = r#"
+            <H1>My Bookmarks</H1>
+            <DL><p>
+                <DT><H3 ADD_DATE="1600000000">Folder A</H3>
+                <DL><p>
+                    <DT><A HREF="https://example.com/">Example</A>
+                    <DT><H3>Nested</H3>
+                    <DL><p>
+                        <DT><A HREF="https://nested.example.com/">Nested Link</A>
+                    </DL><p>
+                </DL><p>
+                <DT><A HREF="https://top.example.com/">Top Link</A>
+            </DL><p>
+        "#;
+        let root = parse(doc).unwrap();
+        assert_eq!(root.title, "My Bookmarks");
+        assert_eq!(root.bookmarks.len(), 1);
+        assert_eq!(root.bookmarks[0].url, "https://top.example.com/");
+        assert_eq!(root.folders.len(), 1);
+
+        let folder_a = &root.folders[0];
+        assert_eq!(folder_a.title, "Folder A");
+        assert_eq!(folder_a.bookmarks.len(), 1);
+        assert_eq!(folder_a.folders.len(), 1);
+
+        let nested = &folder_a.folders[0];
+        assert_eq!(nested.title, "Nested");
+        assert_eq!(nested.bookmarks.len(), 1);
+        assert_eq!(nested.bookmarks[0].url, "https://nested.example.com/");
+    }
+
+    #[test]
+    fn root_title_defaults_when_no_h1_present() {
+        let doc = "<DL><p></DL><p>";
+        let root = parse(doc).unwrap();
+        assert_eq!(root.title, "Bookmarks");
+    }
+
+    #[test]
+    fn add_date_is_parsed_when_present_and_none_otherwise() {
+        let doc = r#"
+            <DL><p>
+                <DT><A HREF="https://dated.example/" ADD_DATE="1700000000">Dated</A>
+                <DT><A HREF="https://undated.example/">Undated</A>
+            </DL><p>
+        "#;
+        let root = parse(doc).unwrap();
+        assert_eq!(root.bookmarks[0].add_date, Some(1700000000));
+        assert_eq!(root.bookmarks[1].add_date, None);
+    }
+
+    #[test]
+    fn attribute_quoting_and_casing_are_tolerated() {
+        let doc = r#"<DL><p><DT><a href='https://single.example/'>Single</a></DL><p>"#;
+        let root = parse(doc).unwrap();
+        assert_eq!(root.bookmarks[0].url, "https://single.example/");
+    }
+
+    #[test]
+    fn decodes_common_entities_in_titles() {
+        let doc = r#"<DL><p><DT><H3>Q&amp;A &lt;Archive&gt;</H3><DL><p></DL><p></DL><p>"#;
+        let root = parse(doc).unwrap();
+        assert_eq!(root.folders[0].title, "Q&A <Archive>");
+    }
+
+    #[test]
+    fn unrecognized_and_unterminated_entities_pass_through() {
+        assert_eq!(decode_entities("A &frobnicate; B"), "A &frobnicate; B");
+        assert_eq!(decode_entities("A & B"), "A & B");
+    }
+
+    #[test]
+    fn unclosed_h3_tag_is_an_error() {
+        let doc = "<DL><p><DT><H3>Folder with no close<DL><p></DL><p></DL><p>";
+        match parse(doc) {
+            Err(ParseError::UnclosedTag("h3")) => {}
+            other => panic!("expected UnclosedTag(\"h3\"), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn unclosed_a_tag_is_an_error() {
+        let doc = r#"<DL><p><DT><A HREF="https://example.com/">Example</DL><p>"#;
+        match parse(doc) {
+            Err(ParseError::UnclosedTag("a")) => {}
+            other => panic!("expected UnclosedTag(\"a\"), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn folders_left_open_at_end_of_document_are_unbalanced() {
+        let doc = r#"
+            <DL><p>
+                <DT><H3>Never closed</H3>
+                <DL><p>
+                    <DT><A HREF="https://example.com/">Example</A>
+        "#;
+        match parse(doc) {
+            Err(ParseError::UnbalancedTags) => {}
+            other => panic!("expected UnbalancedTags, got {:?}", other),
+        }
+    }
+}
