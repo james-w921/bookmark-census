@@ -56,7 +56,9 @@ pub fn parse(input: &str) -> Result<Folder, ParseError> {
             "h3" if !closing => {
                 let (text_end, after) =
                     find_close(input, cursor, "h3").ok_or(ParseError::UnclosedTag("h3"))?;
-                pending_folder = Some(Folder::new(decode_entities(&input[cursor..text_end])));
+                let mut folder = Folder::new(decode_entities(&input[cursor..text_end]));
+                folder.last_modified = get_attr(attrs, "last_modified").and_then(|v| v.parse().ok());
+                pending_folder = Some(folder);
                 cursor = after;
             }
             "a" if !closing => {
@@ -65,6 +67,8 @@ pub fn parse(input: &str) -> Result<Folder, ParseError> {
                 let title = decode_entities(&input[cursor..text_end]);
                 let url = get_attr(attrs, "href").unwrap_or_default();
                 let add_date = get_attr(attrs, "add_date").and_then(|v| v.parse().ok());
+                let last_modified = get_attr(attrs, "last_modified").and_then(|v| v.parse().ok());
+                let icon = get_attr(attrs, "icon");
                 cursor = after;
 
                 let top = stack.last_mut().ok_or(ParseError::UnbalancedTags)?;
@@ -72,6 +76,8 @@ pub fn parse(input: &str) -> Result<Folder, ParseError> {
                     title,
                     url,
                     add_date,
+                    last_modified,
+                    icon,
                 });
             }
             "dl" => {
@@ -275,6 +281,30 @@ mod tests {
         let root = parse(doc).unwrap();
         assert_eq!(root.bookmarks[0].add_date, Some(1700000000));
         assert_eq!(root.bookmarks[1].add_date, None);
+    }
+
+    #[test]
+    fn last_modified_and_icon_are_parsed_when_present() {
+        let doc = r#"
+            <DL><p>
+                <DT><H3 LAST_MODIFIED="1650000000">Folder</H3>
+                <DL><p>
+                    <DT><A HREF="https://example.com/" LAST_MODIFIED="1650000001" ICON="data:image/png;base64,abc">Example</A>
+                    <DT><A HREF="https://bare.example/">Bare</A>
+                </DL><p>
+            </DL><p>
+        "#;
+        let root = parse(doc).unwrap();
+        let folder = &root.folders[0];
+        assert_eq!(folder.last_modified, Some(1650000000));
+
+        assert_eq!(folder.bookmarks[0].last_modified, Some(1650000001));
+        assert_eq!(
+            folder.bookmarks[0].icon.as_deref(),
+            Some("data:image/png;base64,abc")
+        );
+        assert_eq!(folder.bookmarks[1].last_modified, None);
+        assert_eq!(folder.bookmarks[1].icon, None);
     }
 
     #[test]
